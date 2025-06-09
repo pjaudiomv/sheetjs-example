@@ -94,17 +94,17 @@
     <div class="mb-2 text-sm text-gray-600">
       Showing {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
     </div>
-    <div class="max-h-96 overflow-x-auto overflow-y-auto rounded-lg border">
-      <Table striped={true}>
-        <TableHead class="sticky top-0 bg-gray-50">
-          {#each headers as header}
-            <TableHeadCell class="whitespace-nowrap">{header}</TableHeadCell>
+    <div class="max-h-96 overflow-y-auto rounded-lg border">
+      <Table striped={true} divClass="overflow-visible">
+        <TableHead class="sticky top-0 z-10">
+          {#each headers as header (header)}
+            <TableHeadCell class="bg-gray-50 whitespace-nowrap before:absolute before:inset-0 before:z-[-1] before:bg-gray-50">{header}</TableHeadCell>
           {/each}
         </TableHead>
         <TableBody>
-          {#each tableData as row, index}
+          {#each tableData as row, _ (_)}
             <TableBodyRow>
-              {#each headers as header}
+              {#each headers as header (header)}
                 <TableBodyCell class="whitespace-nowrap">
                   {formatCellValue(row[header])}
                 </TableBodyCell>
@@ -114,20 +114,14 @@
         </TableBody>
       </Table>
     </div>
-  {:else}
-    <div class="py-8 text-center text-gray-500">
-      <Dropzone bind:files>
-        <svg class="mx-auto mb-4 h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
-        <p class="text-lg font-medium">Drop files here or click to upload</p>
-        <p class="mt-2 text-sm">Upload an Excel or CSV file to get started</p>
-      </Dropzone>
-    </div>
   {/if}
+</div>
+<div class="py-8 text-center text-gray-500">
+  <Dropzone bind:files>
+    <svg class="mx-auto mb-4 h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+    <p class="text-lg font-medium">Drop files here or click to upload</p>
+    <p class="mt-2 text-sm">Upload an Excel or CSV file to get started</p>
+  </Dropzone>
 </div>
