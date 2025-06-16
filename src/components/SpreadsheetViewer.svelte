@@ -7,11 +7,15 @@
   let headers = $state<string[]>([]);
   let isLoading = $state(false);
   let error = $state<string | null>(null);
+  let sortColumn = $state<string | null>(null);
+  let sortDirection = $state<'asc' | 'desc'>('asc');
 
   function resetData() {
     tableData = [];
     headers = [];
     error = null;
+    sortColumn = null;
+    sortDirection = 'asc';
   }
 
   $effect(() => {
@@ -71,6 +75,36 @@
     if (typeof value === 'number' && !isFinite(value)) return '';
     return String(value);
   }
+
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      // If clicking the same column, toggle direction
+      sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      // New column, set as ascending
+      sortColumn = column;
+      sortDirection = 'asc';
+    }
+
+    tableData = [...tableData].sort((a, b) => {
+      const aVal = a[column];
+      const bVal = b[column];
+
+      // Handle null/undefined values
+      if (aVal == null) return sortDirection === 'asc' ? -1 : 1;
+      if (bVal == null) return sortDirection === 'asc' ? 1 : -1;
+
+      // Compare based on type
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+
+      // Default string comparison
+      const aStr = String(aVal).toLowerCase();
+      const bStr = String(bVal).toLowerCase();
+      return sortDirection === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+    });
+  }
 </script>
 
 <div class="p-4">
@@ -98,7 +132,16 @@
       <Table striped={true} divClass="overflow-visible">
         <TableHead class="sticky top-0 z-10">
           {#each headers as header (header)}
-            <TableHeadCell class="bg-gray-50 whitespace-nowrap before:absolute before:inset-0 before:z-[-1] before:bg-gray-50">{header}</TableHeadCell>
+            <TableHeadCell class="bg-gray-50 p-0 whitespace-nowrap before:absolute before:inset-0 before:z-[-1] before:bg-gray-50">
+              <button class="flex h-full w-full cursor-pointer items-center gap-1 px-6 py-3 text-left select-none hover:bg-gray-100" onclick={() => handleSort(header)}>
+                {header}
+                {#if sortColumn === header}
+                  <span class="text-xs">
+                    {sortDirection === 'asc' ? '↑' : '↓'}
+                  </span>
+                {/if}
+              </button>
+            </TableHeadCell>
           {/each}
         </TableHead>
         <TableBody>
