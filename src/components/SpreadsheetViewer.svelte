@@ -12,7 +12,7 @@
   let gridContainer = $state<HTMLDivElement | null>(null);
   let grid: any = null; // Not reactive, managed manually
   let currentFileName = $state<string>('');
-  let exportFormat = $state<'xlsx' | 'csv'>('xlsx');
+  let exportFormat = $state<'xlsx' | 'csv' | 'json'>('xlsx');
 
   // Remote source states
   let remoteUrl = $state<string>('');
@@ -278,26 +278,53 @@
     if (sheets.length === 0) return;
 
     try {
-      // Create a new workbook
-      const workbook = XLSX.utils.book_new();
-
-      // Add each sheet to the workbook
-      sheets.forEach((sheet, index) => {
-        // Use grid data for active sheet (to include edits), otherwise use the stored data
-        const sheetData = index === activeSheetIndex && grid ? grid.data : sheet.data;
-        const worksheet = XLSX.utils.json_to_sheet(sheetData);
-        XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
-      });
-
       // Generate appropriate filename with timestamp
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
       const filename = `${currentFileName}_export_${timestamp}`;
 
-      // Export based on selected format
-      if (exportFormat === 'xlsx') {
-        XLSX.writeFile(workbook, `${filename}.xlsx`);
+      // For JSON export
+      if (exportFormat === 'json') {
+        // Collect all sheet data, including any edits in the active sheet
+        const exportData: Record<string, any[]> = {};
+
+        sheets.forEach((sheet, index) => {
+          // Use grid data for active sheet (to include edits), otherwise use the stored data
+          const sheetData = index === activeSheetIndex && grid ? grid.data : sheet.data;
+          exportData[sheet.name] = sheetData;
+        });
+
+        // If there's only one sheet, export just the array
+        const jsonData = sheets.length === 1 ? exportData[sheets[0].name] : exportData;
+        const jsonString = JSON.stringify(jsonData, null, 2);
+
+        // Create a blob and download it
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filename}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
       } else {
-        XLSX.writeFile(workbook, `${filename}.csv`);
+        // For CSV and XLSX formats
+        const workbook = XLSX.utils.book_new();
+
+        // Add each sheet to the workbook
+        sheets.forEach((sheet, index) => {
+          // Use grid data for active sheet (to include edits), otherwise use the stored data
+          const sheetData = index === activeSheetIndex && grid ? grid.data : sheet.data;
+          const worksheet = XLSX.utils.json_to_sheet(sheetData);
+          XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+        });
+
+        // Export based on selected format
+        if (exportFormat === 'xlsx') {
+          XLSX.writeFile(workbook, `${filename}.xlsx`);
+        } else {
+          XLSX.writeFile(workbook, `${filename}.csv`);
+        }
       }
     } catch (err) {
       console.error('Export failed:', err);
@@ -526,6 +553,7 @@
         <select bind:value={exportFormat} class="rounded-md border border-gray-300 text-sm">
           <option value="xlsx">Excel (.xlsx)</option>
           <option value="csv">CSV (.csv)</option>
+          <option value="json">JSON (.json)</option>
         </select>
         <Button size="sm" onclick={exportData}>
           <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
