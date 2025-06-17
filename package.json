@@ -1,5 +1,5 @@
 {
-  "name": "svelte5-vite-ts-tailwind-eslint",
+  "name": "svelte5-sheet",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -42,7 +42,8 @@
     "vitest": "^3.1.2"
   },
   "dependencies": {
-    "globals": "^15.15.0",
+    "canvas-datagrid": "^0.4.7",
+    "globals": "^16.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }
