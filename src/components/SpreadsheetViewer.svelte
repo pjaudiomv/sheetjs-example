@@ -14,6 +14,11 @@
   let currentFileName = $state<string>('');
   let exportFormat = $state<'xlsx' | 'csv'>('xlsx');
 
+  // Remote source states
+  let remoteUrl = $state<string>('');
+  let remoteFormat = $state<'csv' | 'xlsx' | 'json'>('csv');
+  let showRemoteSourceDialog = $state(false);
+
   // New spreadsheet creation states
   let showNewSpreadsheetDialog = $state(false);
   let newSpreadsheetName = $state('New Spreadsheet');
@@ -77,36 +82,192 @@
       const extension = getFileExtension(file.name);
 
       if (!isValidFileType(extension)) {
-        throw new Error('Unsupported file type. Please upload a CSV or Excel file.');
+        throw new Error('Unsupported file type. Please upload a CSV, Excel, or JSON file.');
       }
 
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, {
-        type: 'array',
-        raw: extension === 'csv'
-      });
+      if (extension === 'json') {
+        // Process JSON file
+        const text = await file.text();
+        const jsonData = JSON.parse(text);
 
-      // Process all sheets
-      const processedSheets = workbook.SheetNames.map((sheetName) => {
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
-        const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+        // Handle JSON array format
+        if (Array.isArray(jsonData)) {
+          const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+          sheets = [
+            {
+              name: 'Sheet1',
+              data: jsonData,
+              headers
+            }
+          ];
+        }
+        // Handle JSON object with multiple sheets
+        else if (typeof jsonData === 'object' && jsonData !== null) {
+          const sheetNames = Object.keys(jsonData);
+          if (sheetNames.length === 0) {
+            throw new Error('The JSON data appears to be empty or invalid.');
+          }
 
-        return {
-          name: sheetName,
-          data: jsonData,
-          headers
-        };
-      }).filter((sheet) => sheet.data.length > 0); // Filter out empty sheets
+          sheets = sheetNames
+            .map((sheetName) => {
+              const sheetData = jsonData[sheetName];
+              if (!Array.isArray(sheetData) || sheetData.length === 0) {
+                return {
+                  name: sheetName,
+                  data: [],
+                  headers: []
+                };
+              }
 
-      if (processedSheets.length === 0) {
-        throw new Error('The file appears to be empty or has no readable data.');
+              const headers = Object.keys(sheetData[0]);
+              return {
+                name: sheetName,
+                data: sheetData,
+                headers
+              };
+            })
+            .filter((sheet) => sheet.data.length > 0);
+        } else {
+          throw new Error('Invalid JSON format. Expected an array or object.');
+        }
+      } else {
+        // Process CSV or Excel file
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, {
+          type: 'array',
+          raw: extension === 'csv'
+        });
+
+        // Process all sheets
+        const processedSheets = workbook.SheetNames.map((sheetName) => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
+          const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+
+          return {
+            name: sheetName,
+            data: jsonData,
+            headers
+          };
+        }).filter((sheet) => sheet.data.length > 0); // Filter out empty sheets
+
+        if (processedSheets.length === 0) {
+          throw new Error('The file appears to be empty or has no readable data.');
+        }
+
+        sheets = processedSheets;
       }
 
-      sheets = processedSheets;
       activeSheetIndex = 0;
     } catch (err) {
       error = err instanceof Error ? err.message : 'An error occurred while processing the file.';
+      resetData();
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  async function fetchRemoteData() {
+    if (!remoteUrl.trim()) {
+      error = 'Please enter a valid URL';
+      return;
+    }
+
+    isLoading = true;
+    error = null;
+
+    try {
+      const response = await fetch(remoteUrl);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+      }
+
+      // Handle different format types
+      switch (remoteFormat) {
+        case 'json': {
+          const jsonData = await response.json();
+
+          // Handle JSON array format
+          if (Array.isArray(jsonData)) {
+            const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+            sheets = [
+              {
+                name: 'Sheet1',
+                data: jsonData,
+                headers
+              }
+            ];
+          }
+          // Handle JSON object with multiple sheets
+          else if (typeof jsonData === 'object' && jsonData !== null) {
+            const sheetNames = Object.keys(jsonData);
+            if (sheetNames.length === 0) {
+              throw new Error('The JSON data appears to be empty or invalid.');
+            }
+
+            sheets = sheetNames
+              .map((sheetName) => {
+                const sheetData = jsonData[sheetName];
+                if (!Array.isArray(sheetData) || sheetData.length === 0) {
+                  return {
+                    name: sheetName,
+                    data: [],
+                    headers: []
+                  };
+                }
+
+                const headers = Object.keys(sheetData[0]);
+                return {
+                  name: sheetName,
+                  data: sheetData,
+                  headers
+                };
+              })
+              .filter((sheet) => sheet.data.length > 0);
+          } else {
+            throw new Error('Invalid JSON format. Expected an array or object.');
+          }
+
+          break;
+        }
+        case 'csv':
+        case 'xlsx': {
+          const buffer = await response.arrayBuffer();
+          const workbook = XLSX.read(buffer, {
+            type: 'array',
+            raw: remoteFormat === 'csv'
+          });
+
+          // Process all sheets
+          const processedSheets = workbook.SheetNames.map((sheetName) => {
+            const worksheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
+            const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+
+            return {
+              name: sheetName,
+              data: jsonData,
+              headers
+            };
+          }).filter((sheet) => sheet.data.length > 0); // Filter out empty sheets
+
+          if (processedSheets.length === 0) {
+            throw new Error('The file appears to be empty or has no readable data.');
+          }
+
+          sheets = processedSheets;
+          break;
+        }
+        default:
+          throw new Error('Unsupported format selected.');
+      }
+
+      activeSheetIndex = 0;
+      currentFileName = new URL(remoteUrl).pathname.split('/').pop()?.split('.')[0] || 'remote-data';
+      showRemoteSourceDialog = false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'An error occurred while processing the remote data.';
       resetData();
     } finally {
       isLoading = false;
@@ -149,7 +310,7 @@
   }
 
   function isValidFileType(extension: string): boolean {
-    return ['csv', 'xlsx'].includes(extension);
+    return ['csv', 'xlsx', 'json'].includes(extension);
   }
 
   function createNewSpreadsheet() {
@@ -324,12 +485,18 @@
 </script>
 
 <div class="p-4">
-  <div class="mb-4 flex justify-between">
+  <div class="mb-4 flex flex-wrap justify-between gap-2">
     <div>
-      <Fileupload bind:files accept=".xlsx,.csv" size="md" clearable={true} disabled={isLoading} />
-      <p class="mt-1 text-sm text-gray-500">Supported formats: Excel (.xlsx, .xls) and CSV (.csv)</p>
+      <Fileupload bind:files accept=".xlsx,.csv,.json" size="md" clearable={true} disabled={isLoading} />
+      <p class="mt-1 text-sm text-gray-500">Supported formats: Excel (.xlsx), CSV (.csv), and JSON (.json)</p>
     </div>
-    <div>
+    <div class="flex gap-2">
+      <Button size="md" color="blue" onclick={() => (showRemoteSourceDialog = true)}>
+        <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+        </svg>
+        Load Remote
+      </Button>
       <Button size="md" color="green" onclick={() => (showNewSpreadsheetDialog = true)}>
         <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -460,7 +627,7 @@
           />
         </svg>
         <p class="text-lg font-medium">Drop files here or click to upload</p>
-        <p class="mt-2 text-sm">Upload an Excel or CSV file to get started</p>
+        <p class="mt-2 text-sm">Upload an Excel, CSV, or JSON file to get started</p>
       </Dropzone>
     </div>
   {/if}
@@ -566,6 +733,51 @@
         >
           Delete
         </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Remote Source Dialog -->
+{#if showRemoteSourceDialog}
+  <div class="bg-opacity-50 fixed inset-0 z-50 flex items-center justify-center bg-gray-600">
+    <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-xl font-medium text-gray-900">Load Remote Data</h3>
+        <button type="button" class="rounded-lg bg-transparent p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-900" onclick={() => (showRemoteSourceDialog = false)} aria-label="Close dialog">
+          <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+            <path
+              fill-rule="evenodd"
+              d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+              clip-rule="evenodd"
+            ></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <Label for="remote-url">Remote URL</Label>
+          <Input id="remote-url" placeholder="https://example.com/data.csv" bind:value={remoteUrl} />
+          <p class="mt-1 text-xs text-gray-500">Enter the full URL to a CSV, Excel, or JSON file</p>
+        </div>
+
+        <div>
+          <Label for="remote-format">File Format</Label>
+          <div class="mt-1">
+            <select id="remote-format" bind:value={remoteFormat} class="w-full rounded-md border border-gray-300 p-2 text-sm">
+              <option value="csv">CSV</option>
+              <option value="xlsx">Excel (.xlsx)</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+          <p class="mt-1 text-xs text-gray-500">JSON must be an array of objects or an object with sheet names as keys and arrays as values</p>
+        </div>
+      </div>
+
+      <div class="mt-6 flex gap-2">
+        <Button color="blue" onclick={fetchRemoteData}>Load Data</Button>
+        <Button color="gray" onclick={() => (showRemoteSourceDialog = false)}>Cancel</Button>
       </div>
     </div>
   </div>
