@@ -15,6 +15,15 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{js,ts}']
   },
   build: {
-    chunkSizeWarningLimit: 1000
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          xlsx: ['xlsx'],
+          vendor: ['canvas-datagrid'],
+          ui: ['flowbite-svelte']
+        }
+      }
+    }
   }
 });

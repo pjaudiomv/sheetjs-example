@@ -5,8 +5,8 @@
   import { onMount } from 'svelte';
 
   let files = $state<FileList | undefined>(undefined);
-  let tableData = $state<Record<string, any>[]>([]);
-  let headers = $state<string[]>([]);
+  let sheets = $state<{ name: string; data: Record<string, any>[]; headers: string[] }[]>([]);
+  let activeSheetIndex = $state<number>(0);
   let isLoading = $state(false);
   let error = $state<string | null>(null);
   let gridContainer = $state<HTMLDivElement | null>(null);
@@ -19,17 +19,14 @@
   let newSpreadsheetName = $state('New Spreadsheet');
   let newSpreadsheetRows = $state(10);
   let newSpreadsheetColumns = $state(5);
+  let newSpreadsheetSheets = $state([{ name: 'Sheet1', rows: 10, columns: 5 }]);
 
-  // Use $derived instead of $state + $effect
-  let columnNames = $derived(
-    Array(newSpreadsheetColumns)
-      .fill('')
-      .map((_, i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : ''))
-  );
+  // Get active sheet for easy access
+  let activeSheet = $derived(sheets[activeSheetIndex] || { name: '', data: [], headers: [] });
 
   function resetData() {
-    tableData = [];
-    headers = [];
+    sheets = [];
+    activeSheetIndex = 0;
     error = null;
   }
 
@@ -49,15 +46,15 @@
   });
 
   $effect(() => {
-    // Only run this when tableData changes
-    if (tableData.length > 0 && gridContainer) {
+    // Only run this when active sheet data changes
+    if (activeSheet && activeSheet.data.length > 0 && gridContainer) {
       // Clean up previous grid before creating a new one
       cleanupGrid();
 
       // Create new grid with latest data
       grid = canvasDatagrid({
         parentNode: gridContainer,
-        data: tableData,
+        data: activeSheet.data,
         editable: true
       });
 
@@ -89,16 +86,25 @@
         raw: extension === 'csv'
       });
 
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
+      // Process all sheets
+      const processedSheets = workbook.SheetNames.map((sheetName) => {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
+        const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
 
-      if (jsonData.length === 0) {
+        return {
+          name: sheetName,
+          data: jsonData,
+          headers
+        };
+      }).filter((sheet) => sheet.data.length > 0); // Filter out empty sheets
+
+      if (processedSheets.length === 0) {
         throw new Error('The file appears to be empty or has no readable data.');
       }
 
-      headers = Object.keys(jsonData[0]);
-      tableData = jsonData;
+      sheets = processedSheets;
+      activeSheetIndex = 0;
     } catch (err) {
       error = err instanceof Error ? err.message : 'An error occurred while processing the file.';
       resetData();
@@ -108,18 +114,19 @@
   }
 
   function exportData() {
-    if (!grid) return;
+    if (sheets.length === 0) return;
 
     try {
-      // Get the current data from the grid (including any edits)
-      const currentData = grid.data;
-
-      // Create a new worksheet from the data
-      const worksheet = XLSX.utils.json_to_sheet(currentData);
-
-      // Create a workbook with the worksheet
+      // Create a new workbook
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+
+      // Add each sheet to the workbook
+      sheets.forEach((sheet, index) => {
+        // Use grid data for active sheet (to include edits), otherwise use the stored data
+        const sheetData = index === activeSheetIndex && grid ? grid.data : sheet.data;
+        const worksheet = XLSX.utils.json_to_sheet(sheetData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+      });
 
       // Generate appropriate filename with timestamp
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
@@ -147,22 +154,60 @@
 
   function createNewSpreadsheet() {
     try {
-      // Generate column headers (A, B, C, ... Z, AA, AB, etc.)
-      const headers = columnNames.slice();
+      // Check for duplicate sheet names
+      const sheetNames = newSpreadsheetSheets.map((sheet) => sheet.name);
+      const uniqueNames = new Set(sheetNames);
 
-      // Create empty rows with the given column headers
-      const data = Array(newSpreadsheetRows)
-        .fill(0)
-        .map(() => {
-          const row: Record<string, any> = {};
-          headers.forEach((header) => {
-            row[header] = '';
-          });
-          return row;
+      if (uniqueNames.size !== sheetNames.length) {
+        // If there are duplicates, make them unique by appending numbers
+        const usedNames = new Set<string>();
+
+        newSpreadsheetSheets = newSpreadsheetSheets.map((sheet) => {
+          let name = sheet.name;
+          let counter = 1;
+
+          // If name already exists, make it unique
+          while (usedNames.has(name)) {
+            name = `${sheet.name} (${counter})`;
+            counter++;
+          }
+
+          usedNames.add(name);
+          return { ...sheet, name };
         });
 
+        // Notify the user but continue with creation
+        error = 'Duplicate sheet names were found and have been made unique.';
+        setTimeout(() => (error = null), 3000);
+      }
+
+      const newSheets = newSpreadsheetSheets.map((sheetConfig) => {
+        // Generate column headers for this sheet
+        const headers = Array(sheetConfig.columns)
+          .fill('')
+          .map((_, i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : ''));
+
+        // Create empty rows with the given column headers
+        const data = Array(sheetConfig.rows)
+          .fill(0)
+          .map(() => {
+            const row: Record<string, any> = {};
+            headers.forEach((header) => {
+              row[header] = '';
+            });
+            return row;
+          });
+
+        return {
+          name: sheetConfig.name,
+          data,
+          headers
+        };
+      });
+
       // Set the data
-      tableData = data;
+      sheets = newSheets;
+      activeSheetIndex = 0;
       currentFileName = newSpreadsheetName;
 
       // Close the dialog
@@ -171,6 +216,111 @@
       error = err instanceof Error ? err.message : 'An error occurred while creating the spreadsheet.';
     }
   }
+
+  function addNewSheet() {
+    // Base name for new sheet
+    let baseName = 'Sheet';
+    let counter = newSpreadsheetSheets.length + 1;
+    let newSheetName = `${baseName}${counter}`;
+
+    // Ensure the sheet name is unique
+    while (newSpreadsheetSheets.some((s) => s.name === newSheetName)) {
+      counter++;
+      newSheetName = `${baseName}${counter}`;
+    }
+
+    newSpreadsheetSheets = [
+      ...newSpreadsheetSheets,
+      {
+        name: newSheetName,
+        rows: newSpreadsheetRows,
+        columns: newSpreadsheetColumns
+      }
+    ];
+  }
+
+  function removeSheet(index: number) {
+    if (newSpreadsheetSheets.length > 1) {
+      newSpreadsheetSheets = newSpreadsheetSheets.filter((_, i) => i !== index);
+    }
+  }
+
+  function addSheetToExisting() {
+    // Get the current data to ensure it's saved
+    if (grid && activeSheetIndex < sheets.length) {
+      sheets[activeSheetIndex].data = grid.data;
+    }
+
+    // Generate column headers
+    const headers = Array(5) // Default 5 columns for new sheet
+      .fill('')
+      .map((_, i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : ''));
+
+    // Create empty rows
+    const data = Array(10) // Default 10 rows for new sheet
+      .fill(0)
+      .map(() => {
+        const row: Record<string, any> = {};
+        headers.forEach((header) => {
+          row[header] = '';
+        });
+        return row;
+      });
+
+    // Add new sheet with unique name
+    let baseName = 'Sheet';
+    let counter = sheets.length + 1;
+    let newSheetName = `${baseName}${counter}`;
+
+    // Ensure the sheet name is unique
+    while (sheets.some((s) => s.name === newSheetName)) {
+      counter++;
+      newSheetName = `${baseName}${counter}`;
+    }
+
+    sheets = [...sheets, { name: newSheetName, data, headers }];
+    activeSheetIndex = sheets.length - 1; // Switch to the new sheet
+  }
+
+  function renameActiveSheet(newName: string) {
+    if (activeSheetIndex < sheets.length) {
+      // Check if the name already exists in other sheets
+      const nameExists = sheets.some((sheet, idx) => idx !== activeSheetIndex && sheet.name === newName);
+
+      if (nameExists) {
+        error = `A sheet named "${newName}" already exists. Please choose a different name.`;
+        setTimeout(() => {
+          error = null;
+        }, 3000); // Clear error after 3 seconds
+        return;
+      }
+
+      sheets[activeSheetIndex].name = newName;
+      sheets = [...sheets]; // Trigger reactivity
+    }
+  }
+
+  function deleteActiveSheet() {
+    if (sheets.length > 1) {
+      // Save current grid data if needed
+      if (grid && activeSheetIndex < sheets.length) {
+        sheets.forEach((sheet, i) => {
+          if (i === activeSheetIndex) {
+            sheet.data = grid.data;
+          }
+        });
+      }
+
+      // Remove the active sheet
+      sheets = sheets.filter((_, i) => i !== activeSheetIndex);
+
+      // Adjust activeSheetIndex if necessary
+      activeSheetIndex = Math.min(activeSheetIndex, sheets.length - 1);
+    }
+  }
+
+  // Show confirm dialog before deleting
+  let showDeleteConfirmDialog = $state(false);
 </script>
 
 <div class="p-4">
@@ -200,10 +350,10 @@
       <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
       <span class="ml-3 text-gray-600">Processing file...</span>
     </div>
-  {:else if tableData.length > 0}
+  {:else if sheets.length > 0}
     <div class="mb-2 flex items-center justify-between">
       <div class="text-sm text-gray-600">
-        <span class="font-medium">{currentFileName}</span>: {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
+        <span class="font-medium">{currentFileName}</span>: {sheets.length} sheet{sheets.length !== 1 ? 's' : ''}
       </div>
       <div class="flex items-center gap-2">
         <select bind:value={exportFormat} class="rounded-md border border-gray-300 text-sm">
@@ -223,6 +373,78 @@
         </Button>
       </div>
     </div>
+
+    <!-- Sheet tabs -->
+    <div class="mb-2 flex border-b border-gray-200">
+      <div class="flex flex-grow overflow-x-auto">
+        {#each sheets as sheet, i (`${i}-${sheet.name}`)}
+          <button
+            class="min-w-[100px] px-3 py-2 text-sm font-medium {activeSheetIndex === i ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-blue-500'}"
+            onclick={() => {
+              if (grid && activeSheetIndex < sheets.length) {
+                sheets[activeSheetIndex].data = grid.data;
+              }
+              activeSheetIndex = i;
+            }}
+          >
+            {sheet.name}
+          </button>
+        {/each}
+      </div>
+      <div class="flex">
+        <!-- Sheet management buttons -->
+        <button class="p-2 text-gray-500 hover:text-blue-500" title="Add sheet" aria-label="Add sheet" onclick={addSheetToExisting}>
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+        </button>
+        <button
+          class="p-2 text-gray-500 hover:text-blue-500"
+          title="Rename sheet"
+          aria-label="Rename sheet"
+          onclick={() => {
+            const newName = prompt('Enter new sheet name', activeSheet.name);
+            if (newName) renameActiveSheet(newName);
+          }}
+        >
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+            />
+          </svg>
+        </button>
+        <button
+          class="p-2 text-gray-500 hover:text-red-500"
+          title="Delete sheet"
+          aria-label="Delete sheet"
+          onclick={() => {
+            showDeleteConfirmDialog = sheets.length > 1;
+          }}
+          disabled={sheets.length <= 1}
+        >
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="mb-2">
+      <div class="text-sm text-gray-600">
+        Sheet: <span class="font-medium">{activeSheet.name}</span> -
+        {activeSheet.data.length} row{activeSheet.data.length !== 1 ? 's' : ''} with
+        {activeSheet.headers.length} column{activeSheet.headers.length !== 1 ? 's' : ''}
+      </div>
+    </div>
+
     <div class="rounded-lg border">
       <div bind:this={gridContainer} class="w-full"></div>
     </div>
@@ -266,20 +488,84 @@
           <Label for="spreadsheet-name">Spreadsheet Name</Label>
           <Input id="spreadsheet-name" placeholder="Enter name..." bind:value={newSpreadsheetName} />
         </div>
-        <div>
-          <Label for="rows-count">Number of Rows</Label>
-          <Input id="rows-count" type="number" min="1" max="1000" bind:value={newSpreadsheetRows} />
+
+        <div class="border-t border-gray-200 pt-4">
+          <h4 class="mb-2 font-medium">Sheets</h4>
+
+          {#each newSpreadsheetSheets as sheetConfig, index (index)}
+            <div class="mb-3 rounded border border-gray-200 p-3">
+              <div class="mb-2 flex items-center justify-between">
+                <h5 class="font-medium">Sheet {index + 1}</h5>
+                {#if newSpreadsheetSheets.length > 1}
+                  <button class="text-red-500 hover:text-red-700" onclick={() => removeSheet(index)} aria-label="Remove sheet">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                {/if}
+              </div>
+
+              <div class="space-y-2">
+                <div>
+                  <Label for={`sheet-name-${index}`}>Sheet Name</Label>
+                  <Input id={`sheet-name-${index}`} placeholder="Sheet name..." bind:value={sheetConfig.name} />
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label for={`rows-count-${index}`}>Rows</Label>
+                    <Input id={`rows-count-${index}`} type="number" min="1" max="1000" bind:value={sheetConfig.rows} />
+                  </div>
+                  <div>
+                    <Label for={`columns-count-${index}`}>Columns</Label>
+                    <Input id={`columns-count-${index}`} type="number" min="1" max="50" bind:value={sheetConfig.columns} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          {/each}
+
+          <Button size="sm" color="blue" onclick={addNewSheet} class="mt-1 w-full">
+            <svg class="mr-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add Sheet
+          </Button>
         </div>
-        <div>
-          <Label for="columns-count">Number of Columns</Label>
-          <Input id="columns-count" type="number" min="1" max="50" bind:value={newSpreadsheetColumns} />
-        </div>
-        <div class="text-sm text-gray-500">Column names will be automatically generated (A, B, C, ...)</div>
       </div>
 
       <div class="mt-6 flex gap-2">
         <Button color="green" onclick={createNewSpreadsheet}>Create Spreadsheet</Button>
         <Button color="gray" onclick={() => (showNewSpreadsheetDialog = false)}>Cancel</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete sheet confirmation dialog -->
+{#if showDeleteConfirmDialog}
+  <div class="bg-opacity-50 fixed inset-0 z-50 flex items-center justify-center bg-gray-600">
+    <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+      <div class="mb-4">
+        <h3 class="text-xl font-medium text-gray-900">Delete Sheet</h3>
+        <p class="mt-2 text-gray-600">Are you sure you want to delete the sheet "{activeSheet.name}"? This action cannot be undone.</p>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <Button
+          color="gray"
+          onclick={() => {
+            showDeleteConfirmDialog = false;
+          }}>Cancel</Button
+        >
+        <Button
+          color="red"
+          onclick={() => {
+            deleteActiveSheet();
+            showDeleteConfirmDialog = false;
+          }}
+        >
+          Delete
+        </Button>
       </div>
     </div>
   </div>
