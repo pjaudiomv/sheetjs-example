@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Dropzone, Fileupload } from 'flowbite-svelte';
+  import { Dropzone, Fileupload, Button } from 'flowbite-svelte';
   import * as XLSX from 'xlsx';
   import canvasDatagrid from 'canvas-datagrid';
   import { onMount } from 'svelte';
@@ -11,6 +11,8 @@
   let error = $state<string | null>(null);
   let gridContainer = $state<HTMLDivElement | null>(null);
   let grid: any = null; // Not reactive, managed manually
+  let currentFileName = $state<string>('');
+  let exportFormat = $state<'xlsx' | 'csv'>('xlsx');
 
   function resetData() {
     tableData = [];
@@ -30,6 +32,7 @@
       resetData();
       return;
     }
+    currentFileName = files[0].name.split('.')[0]; // Store the file name for export
     processFile(files[0]);
   });
 
@@ -42,7 +45,8 @@
       // Create new grid with latest data
       grid = canvasDatagrid({
         parentNode: gridContainer,
-        data: tableData
+        data: tableData,
+        editable: true
       });
 
       grid.style.height = '400px';
@@ -91,6 +95,36 @@
     }
   }
 
+  function exportData() {
+    if (!grid) return;
+
+    try {
+      // Get the current data from the grid (including any edits)
+      const currentData = grid.data;
+
+      // Create a new worksheet from the data
+      const worksheet = XLSX.utils.json_to_sheet(currentData);
+
+      // Create a workbook with the worksheet
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+
+      // Generate appropriate filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      const filename = `${currentFileName}_export_${timestamp}`;
+
+      // Export based on selected format
+      if (exportFormat === 'xlsx') {
+        XLSX.writeFile(workbook, `${filename}.xlsx`);
+      } else {
+        XLSX.writeFile(workbook, `${filename}.csv`);
+      }
+    } catch (err) {
+      console.error('Export failed:', err);
+      error = err instanceof Error ? err.message : 'An error occurred during export.';
+    }
+  }
+
   function getFileExtension(filename: string): string {
     return filename.toLowerCase().split('.').pop() || '';
   }
@@ -118,8 +152,27 @@
       <span class="ml-3 text-gray-600">Processing file...</span>
     </div>
   {:else if tableData.length > 0}
-    <div class="mb-2 text-sm text-gray-600">
-      Showing {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
+    <div class="mb-2 flex items-center justify-between">
+      <div class="text-sm text-gray-600">
+        Showing {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
+      </div>
+      <div class="flex items-center gap-2">
+        <select bind:value={exportFormat} class="rounded-md border border-gray-300 text-sm">
+          <option value="xlsx">Excel (.xlsx)</option>
+          <option value="csv">CSV (.csv)</option>
+        </select>
+        <Button size="sm" onclick={exportData}>
+          <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          Export
+        </Button>
+      </div>
     </div>
     <div class="rounded-lg border">
       <div bind:this={gridContainer} class="w-full"></div>
