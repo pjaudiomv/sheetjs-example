@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Dropzone, Fileupload, Button } from 'flowbite-svelte';
+  import { Dropzone, Fileupload, Button, Label, Input } from 'flowbite-svelte';
   import * as XLSX from 'xlsx';
   import canvasDatagrid from 'canvas-datagrid';
   import { onMount } from 'svelte';
@@ -13,6 +13,19 @@
   let grid: any = null; // Not reactive, managed manually
   let currentFileName = $state<string>('');
   let exportFormat = $state<'xlsx' | 'csv'>('xlsx');
+
+  // New spreadsheet creation states
+  let showNewSpreadsheetDialog = $state(false);
+  let newSpreadsheetName = $state('New Spreadsheet');
+  let newSpreadsheetRows = $state(10);
+  let newSpreadsheetColumns = $state(5);
+
+  // Use $derived instead of $state + $effect
+  let columnNames = $derived(
+    Array(newSpreadsheetColumns)
+      .fill('')
+      .map((_, i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : ''))
+  );
 
   function resetData() {
     tableData = [];
@@ -29,7 +42,6 @@
 
   $effect(() => {
     if (!files?.[0]) {
-      resetData();
       return;
     }
     currentFileName = files[0].name.split('.')[0]; // Store the file name for export
@@ -132,12 +144,49 @@
   function isValidFileType(extension: string): boolean {
     return ['csv', 'xlsx'].includes(extension);
   }
+
+  function createNewSpreadsheet() {
+    try {
+      // Generate column headers (A, B, C, ... Z, AA, AB, etc.)
+      const headers = columnNames.slice();
+
+      // Create empty rows with the given column headers
+      const data = Array(newSpreadsheetRows)
+        .fill(0)
+        .map(() => {
+          const row: Record<string, any> = {};
+          headers.forEach((header) => {
+            row[header] = '';
+          });
+          return row;
+        });
+
+      // Set the data
+      tableData = data;
+      currentFileName = newSpreadsheetName;
+
+      // Close the dialog
+      showNewSpreadsheetDialog = false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'An error occurred while creating the spreadsheet.';
+    }
+  }
 </script>
 
 <div class="p-4">
-  <div class="mb-4">
-    <Fileupload bind:files accept=".xlsx,.csv" size="md" clearable={true} disabled={isLoading} />
-    <p class="mt-1 text-sm text-gray-500">Supported formats: Excel (.xlsx, .xls) and CSV (.csv)</p>
+  <div class="mb-4 flex justify-between">
+    <div>
+      <Fileupload bind:files accept=".xlsx,.csv" size="md" clearable={true} disabled={isLoading} />
+      <p class="mt-1 text-sm text-gray-500">Supported formats: Excel (.xlsx, .xls) and CSV (.csv)</p>
+    </div>
+    <div>
+      <Button size="md" color="green" onclick={() => (showNewSpreadsheetDialog = true)}>
+        <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+        </svg>
+        New Spreadsheet
+      </Button>
+    </div>
   </div>
 
   {#if error}
@@ -154,7 +203,7 @@
   {:else if tableData.length > 0}
     <div class="mb-2 flex items-center justify-between">
       <div class="text-sm text-gray-600">
-        Showing {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
+        <span class="font-medium">{currentFileName}</span>: {tableData.length} row{tableData.length !== 1 ? 's' : ''} with {headers.length} column{headers.length !== 1 ? 's' : ''}
       </div>
       <div class="flex items-center gap-2">
         <select bind:value={exportFormat} class="rounded-md border border-gray-300 text-sm">
@@ -177,14 +226,61 @@
     <div class="rounded-lg border">
       <div bind:this={gridContainer} class="w-full"></div>
     </div>
+  {:else}
+    <div class="py-8 text-center text-gray-500">
+      <Dropzone bind:files>
+        <svg class="mx-auto mb-4 h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          />
+        </svg>
+        <p class="text-lg font-medium">Drop files here or click to upload</p>
+        <p class="mt-2 text-sm">Upload an Excel or CSV file to get started</p>
+      </Dropzone>
+    </div>
   {/if}
 </div>
-<div class="py-8 text-center text-gray-500">
-  <Dropzone bind:files>
-    <svg class="mx-auto mb-4 h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
-    <p class="text-lg font-medium">Drop files here or click to upload</p>
-    <p class="mt-2 text-sm">Upload an Excel or CSV file to get started</p>
-  </Dropzone>
-</div>
+
+<!-- Custom dialog for new spreadsheet creation -->
+{#if showNewSpreadsheetDialog}
+  <div class="bg-opacity-50 fixed inset-0 z-50 flex items-center justify-center bg-gray-600">
+    <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-xl font-medium text-gray-900">Create New Spreadsheet</h3>
+        <button type="button" class="rounded-lg bg-transparent p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-900" onclick={() => (showNewSpreadsheetDialog = false)} aria-label="Close dialog">
+          <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+            <path
+              fill-rule="evenodd"
+              d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+              clip-rule="evenodd"
+            ></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <Label for="spreadsheet-name">Spreadsheet Name</Label>
+          <Input id="spreadsheet-name" placeholder="Enter name..." bind:value={newSpreadsheetName} />
+        </div>
+        <div>
+          <Label for="rows-count">Number of Rows</Label>
+          <Input id="rows-count" type="number" min="1" max="1000" bind:value={newSpreadsheetRows} />
+        </div>
+        <div>
+          <Label for="columns-count">Number of Columns</Label>
+          <Input id="columns-count" type="number" min="1" max="50" bind:value={newSpreadsheetColumns} />
+        </div>
+        <div class="text-sm text-gray-500">Column names will be automatically generated (A, B, C, ...)</div>
+      </div>
+
+      <div class="mt-6 flex gap-2">
+        <Button color="green" onclick={createNewSpreadsheet}>Create Spreadsheet</Button>
+        <Button color="gray" onclick={() => (showNewSpreadsheetDialog = false)}>Cancel</Button>
+      </div>
+    </div>
+  </div>
+{/if}
